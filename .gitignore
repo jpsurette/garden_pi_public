@@ -1,0 +1,3 @@
+/sensorhost/.env
+*.DS_Store
+/mongo/data/

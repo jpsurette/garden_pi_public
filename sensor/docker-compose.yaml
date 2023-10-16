@@ -1,24 +1,24 @@
 services:
-  mosquitto:
-    container_name: mosquitto
-    image: eclipse-mosquitto:latest
+  kafka:
+    container_name: kafka
+    image: 'bitnami/kafka:latest'
     networks:
       - default
+    ports:
+      - '9092:9092'
+      - '9094:9094'
     restart: unless-stopped
     environment:
-    - TZ=${TZ:-Etc/UTC}
-    ports:
-      - target: 1883
-        published: 1883
-        protocol: tcp
-        mode: host
-      - target: 9001
-        protocol: tcp
-        mode: host
-    volumes:
-    - ./mosquitto/mosquitto-config:/mosquitto/config
-    - /home/pi/iot_data/mosquitto/log:/mosquitto/log/
-    - /home/pi/iot_data/mosquitto/data:/mosquitto/data/
+      # KRaft settings
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      # Listeners
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093, EXTERNAL://0.0.0.0:9094 #EXTERNAL://:9094,
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://:9092 , EXTERNAL://sensorhost:9094 #, EXTERNAL://localhost:9094
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
   soil-sensor:
     container_name: soil-sensor
     image: soil-sensor:latest
@@ -34,4 +34,4 @@ services:
       - ./soil_sensor.py:/usr/app/src/soil_sensor.py
     command: sh -c "sleep 10s ; python3 ./soil_sensor.py"
     depends_on:
-      - mosquitto
+      - kafka

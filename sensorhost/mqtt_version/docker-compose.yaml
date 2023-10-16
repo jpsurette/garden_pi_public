@@ -14,7 +14,7 @@ services:
       - ./.env:/usr/app/src/.env
     command: sh -c "sleep 10s ; python3 ./save_sensor_data.py"
     depends_on:
-      - kafka
+      - moquitto
       - influxdb
   influxdb:
     container_name: influxdb
@@ -44,24 +44,37 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-  kafka:
-    container_name: kafka
-    image: 'bitnami/kafka:latest'
+  mosquitto:
+    container_name: mosquitto
+    image: eclipse-mosquitto:latest
     networks:
       - default
-    ports:
-      - '9092:9092'
-      - '9094:9094'
+    build:
+      context: .
     restart: unless-stopped
     environment:
-      # KRaft settings
-      - KAFKA_CFG_NODE_ID=0
-      - KAFKA_CFG_PROCESS_ROLES=controller,broker
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
-      # Listeners
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093, EXTERNAL://0.0.0.0:9094 #EXTERNAL://:9094,
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://:9092 , EXTERNAL://sensorhost:9094 #, EXTERNAL://localhost:9094
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
-
+    - TZ=${TZ:-Etc/UTC}
+    ports:
+      - target: 1883
+        published: 1883
+        protocol: tcp
+        mode: host
+      - target: 9001
+        protocol: tcp
+        mode: host
+    volumes:
+    - ./config:/mosquitto/config
+    - /home/pi/iot_data/mosquitto/log:/mosquitto/log/
+    - /home/pi/iot_data/mosquitto/data:/mosquitto/data/
+  portainer-ce:
+    container_name: portainer-ce
+    image: portainer/portainer-ce
+    restart: unless-stopped
+    ports:
+    - 8000:8000
+    - 9000:9000
+    # HTTPS
+    - 9443:9443
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    - /home/pi/iot_data/portainer/data:/data
