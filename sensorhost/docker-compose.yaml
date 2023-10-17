@@ -16,6 +16,7 @@ services:
     depends_on:
       - kafka
       - influxdb
+
   influxdb:
     container_name: influxdb
     image: influxdb:2.7
@@ -35,15 +36,19 @@ services:
     - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG}
     - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET}
     - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
+    env_file:
+      - .env
     volumes:
-    - /home/pi/iot_data/influxdb/data:/var/lib/influxdb
-    - /home/pi/iot_data/influxdb/backup:/var/lib/influxdb/backup
+    - influx_data_volume:/var/lib/influxdb2
+    - influx_backup_volume:/var/lib/backup
+    - influx_config_volume:/etc/influxdb2
     healthcheck:
       test: ["CMD", "curl", "http://localhost:8086"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+
   kafka:
     container_name: kafka
     image: 'bitnami/kafka:latest'
@@ -65,3 +70,46 @@ services:
       - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
 
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    restart: unless-stopped
+    depends_on:
+      - influxdb
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+    env_file:
+      - .env
+    links:
+      - influxdb
+    ports:
+      - '3000:3000'
+    volumes:
+      - grafana_volume:/var/lib/grafana
+
+volumes:
+  influx_data_volume:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /home/pi/iot_data/influxdb/data
+  influx_backup_volume:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /home/pi/iot_data/influxdb/backup
+  influx_config_volume:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /home/pi/iot_data/influxdb/config
+  grafana_volume:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /home/pi/iot_data/grafana
