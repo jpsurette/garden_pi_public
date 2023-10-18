@@ -8,6 +8,9 @@ This project is built entirely within Docker containers and can be run off of a 
 
 An older MQTT-based version offers a parallel setup with lighter weight messaging than Apache Kafka.
 
+![image](/sensor_network_diagram.png)
+
+
 ## Prequisites
 
 #### Equipment list
