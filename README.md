@@ -12,7 +12,7 @@ An older MQTT-based version offers a parallel setup with lighter weight messagin
 
 #### Equipment list
 
-- Raspberry Pi (4b used here)
+- Raspberry Pi running Docker (4b used here)
 - [*Adafruit STEMMA Soil Sensor*](https://www.adafruit.com/product/4026)
 
 ## Starting
