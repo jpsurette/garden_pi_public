@@ -1,3 +1,5 @@
-/sensorhost/.env
 *.DS_Store
+/sensorhost/.env
 /mongo/data/
+/sensorhost/influxdb/
+/extraction/
