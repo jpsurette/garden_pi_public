@@ -35,15 +35,19 @@ services:
     - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG}
     - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET}
     - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
+    env_file:
+      - .env
     volumes:
-    - /home/pi/iot_data/influxdb/data:/var/lib/influxdb
-    - /home/pi/iot_data/influxdb/backup:/var/lib/influxdb/backup
+    - influx_data_volume:/var/lib/influxdb2
+    - influx_backup_volume:/var/lib/backup
+    - influx_config_volume:/etc/influxdb2
     healthcheck:
       test: ["CMD", "curl", "http://localhost:8086"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+
   mosquitto:
     container_name: mosquitto
     image: eclipse-mosquitto:latest
@@ -78,3 +82,29 @@ services:
     volumes:
     - /var/run/docker.sock:/var/run/docker.sock
     - /home/pi/iot_data/portainer/data:/data
+
+volumes:
+  influx_data_volume:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /home/pi/iot_data/influxdb/data
+  influx_backup_volume:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /home/pi/iot_data/influxdb/backup
+  influx_config_volume:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /home/pi/iot_data/influxdb/config
+  grafana_volume:
+    driver: local
+    driver_opts:
+       o: bind
+       type: none
+       device: /home/pi/iot_data/grafana

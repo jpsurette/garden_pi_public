@@ -32,18 +32,24 @@ def json_serial(obj):
         return obj.isoformat()
     raise TypeError ("Type %s not serializable" % type(obj))
 
+# sensor configuration'
+
+i2c_bus = board.I2C()
+
+sensor = Seesaw(i2c_bus, addr=0x36) # check i2cdetect -y 1 for I2c printout & location
 
 sensor_name = socket.gethostname()
+
+
+# KAFKA configuration
+
+kafka_topic = 'kafkatest'
 
 producer = KafkaProducer(
     bootstrap_servers=['kafka:9094'],
     #security_protocol = 'SSL',
     value_serializer=lambda x: json.dumps(x).encode('utf-8'),
     api_version=(0, 10, 2))
-
-i2c_bus = board.I2C()
-
-sensor = Seesaw(i2c_bus, addr=0x36) # check i2cdetect -y 1 for I2c printout & location
 
 
 while True:
@@ -60,6 +66,6 @@ while True:
         }
     }
 
-    producer.send('kafkatest', value=sensor_reading)
+    producer.send(kafka_topic, value=sensor_reading)
 
     t.sleep(1*30)

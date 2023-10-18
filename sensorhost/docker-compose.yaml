@@ -1,7 +1,8 @@
 services:
   soil-sensorhost:
     container_name: soil-sensorhost
-    image: soil-sensorhost:latest
+    build: ./
+    #image: soil-sensorhost:latest
     networks:
       - default
     restart: unless-stopped

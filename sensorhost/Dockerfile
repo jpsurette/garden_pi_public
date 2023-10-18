@@ -1,4 +1,3 @@
-# Build stage
 FROM balenalib/raspberry-pi-debian-python:latest
 
 RUN pip3 install --upgrade pip

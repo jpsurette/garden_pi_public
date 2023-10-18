@@ -12,9 +12,12 @@ from kafka import KafkaConsumer
 import threading
 import logging
 
-# KAFKA
+# KAFKA configuration
+
+kafka_topic = 'kafkatest'
+
 consumer = KafkaConsumer(
-    'kafkatest',
+    kafka_topic,
     bootstrap_servers=['kafka:9094'],
     auto_offset_reset='latest',
     enable_auto_commit=True,
@@ -37,6 +40,8 @@ influx_password = influx_config['INFLUXDB_PASSWORD']
 influx_client = InfluxDBClient(url=influx_url, port=8086, username=influx_user, password=influx_password, token=influx_token, org=influx_org)
 
 write_api = influx_client.write_api(write_options=SYNCHRONOUS)
+
+# Consume sensor data into database
 
 for reading in consumer:
     sensor_reading = reading.value

@@ -21,7 +21,8 @@ services:
       - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
   soil-sensor:
     container_name: soil-sensor
-    image: soil-sensor:latest
+    build: ./
+    #image: soil-sensor:latest
     hostname: ${HOSTNAME}
     networks:
       - default
