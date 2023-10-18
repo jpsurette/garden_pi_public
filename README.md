@@ -51,7 +51,7 @@ And run
 
     export HOSTNAME="$(cat /etc/hostname)"
 
-    docker-compose up -d
+    docker compose up -d
 
 This will save your Pi's hostname to a temporary variable, and that will be used to identify the sensor in influxDB.
 

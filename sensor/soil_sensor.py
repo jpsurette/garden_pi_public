@@ -68,4 +68,4 @@ while True:
 
     producer.send(kafka_topic, value=sensor_reading)
 
-    t.sleep(1*30)
+    t.sleep(1*60)
