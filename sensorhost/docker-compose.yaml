@@ -1,25 +1,80 @@
 services:
-  soil-sensorhost:
-    container_name: soil-sensorhost
+  save_sensor_data:
+    container_name: save_sensor_data
     build: ./
-    #image: soil-sensorhost:latest
+    image: soil-sensorhost:latest
+    logging:
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - default
     restart: unless-stopped
     environment:
       - TZ=${TZ:-Etc/UTC}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - INFLUXDB_HOST=influxdb_${ENVIRONMENT}
+    # replace env file as handling credentials exposed in docker
     env_file:
       - .env
+    # going to copy these using the Dockerfile rather than volumes
     volumes:
       - ./save_sensor_data.py:/usr/app/src/save_sensor_data.py
       - ./.env:/usr/app/src/.env
-    command: sh -c "sleep 10s ; python3 ./save_sensor_data.py"
+    command: >
+      sh -c "sleep 10s ; python3 ./save_sensor_data.py ;"
     depends_on:
-      - kafka
+      - mosquitto
       - influxdb
+    healthcheck:
+      test:
+        ["CMD", "python", "save_sensor_data.py", "check_health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Python script that publishes the data from Influx to kafka
+  send_sensor_data:
+    container_name: send_sensor_data
+    build: ./
+    image: soil-sensorhost:latest
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    networks:
+      - default
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Etc/UTC}
+      - ENVIRONMENT=${ENVIRONMENT}
+    env_file:
+      - .env
+    volumes:
+      - ./send_sensor_data.py:/usr/app/src/send_sensor_data.py
+      - ./.env:/usr/app/src/.env
+    command: >
+      sh -c "sleep 10s ; python3 ./send_sensor_data.py ;"
+    depends_on:
+      - influxdb
+      - kafka
+    healthcheck:
+      test:
+        ["CMD", "python", "send_sensor_data.py", "check_health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: "0.2"
+#          memory: "256M"
 
   influxdb:
-    container_name: influxdb
+    container_name: ${INFLUXDB_HOST}
     image: influxdb:2.7
     restart: unless-stopped
     networks:
@@ -30,13 +85,14 @@ services:
         protocol: tcp
         mode: host
     environment:
-    - TZ="America/New_York"
+    - TZ=${TZ:-Etc/UTC}
     - DOCKER_INFLUXDB_INIT_MODE=setup
     - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_USER}
     - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_PASSWORD}
     - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG}
     - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET}
     - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
+    - INFLUXDB_HOST=${INFLUXDB_HOST}
     env_file:
       - .env
     volumes:
@@ -44,15 +100,27 @@ services:
     - influx_backup_volume:/var/lib/backup
     - influx_config_volume:/etc/influxdb2
     healthcheck:
-      test: ["CMD", "curl", "http://localhost:8086"]
+      test: "curl -f http://localhost:8086/ping"
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512M"
 
+
+  #Kafka messaging for publishing collected sensor data
   kafka:
-    container_name: kafka
+    container_name: kafka_${ENVIRONMENT}
     image: 'bitnami/kafka:latest'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - default
     ports:
@@ -60,24 +128,81 @@ services:
       - '9094:9094'
     restart: unless-stopped
     environment:
-      # KRaft settings
+      - TZ=Etc/UTC
       - KAFKA_CFG_NODE_ID=0
       - KAFKA_CFG_PROCESS_ROLES=controller,broker
       - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
       # Listeners
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093, EXTERNAL://0.0.0.0:9094 #EXTERNAL://:9094,
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://:9092 , EXTERNAL://sensorhost:9094 #, EXTERNAL://localhost:9094
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://0.0.0.0:9094
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka_${ENVIRONMENT}:9092, EXTERNAL://${HOST_IP}:9094
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT, PLAINTEXT:PLAINTEXT
       - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true  # Topics created at publish if don't yet exist
+    volumes:
+      - kafka_data:/var/lib/kafka
+#    deploy:
+#      resources:
+#        limits:
+#          cpus: "0.7"
+#          memory: "768M"
+    healthcheck:
+      test: kafka-topics.sh --list --bootstrap-server localhost:9092 || exit 1
+      interval: 1s
+      timeout: 60s
+      retries: 60
+      
+
+  # MQTT messages to capture readings from sensors on LAN
+  mosquitto:
+    container_name: ${MOSQUITTO_HOST}
+    image: 'eclipse-mosquitto:2.0'
+    networks:
+      - default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    restart: unless-stopped
+    environment:
+    - TZ=${TZ:-Etc/UTC}
+    - MOSQUITTO_HOST=${MOSQUITTO_HOST}
+    env_file:
+      - .env
+    ports:
+      - target: 1883
+        published: 1883
+        protocol: tcp
+        mode: host
+      - target: 9001
+        protocol: tcp
+        mode: host
+    volumes:
+    - ./mosquitto-config:/mosquitto/config 
+    - /home/pi/iot_data/mosquitto/log:/mosquitto/log/
+    - /home/pi/iot_data/mosquitto/data:/mosquitto/data/
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
 
   grafana:
     image: grafana/grafana
     container_name: grafana
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     restart: unless-stopped
     depends_on:
       - influxdb
     environment:
+      - TZ=Etc/UTC
       - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
     env_file:
@@ -88,6 +213,7 @@ services:
       - '3000:3000'
     volumes:
       - grafana_volume:/var/lib/grafana
+
 
 volumes:
   influx_data_volume:
@@ -114,3 +240,5 @@ volumes:
        o: bind
        type: none
        device: /home/pi/iot_data/grafana
+  kafka_data:  
+    driver: local

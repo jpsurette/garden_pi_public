@@ -1,38 +1,50 @@
 services:
-  kafka:
-    container_name: kafka
-    image: 'bitnami/kafka:latest'
+  mosquitto:
+    container_name: mosquitto
+    image: eclipse-mosquitto:latest
     networks:
       - default
-    ports:
-      - '9092:9092'
-      - '9094:9094'
     restart: unless-stopped
+    healthcheck:
+      test: ping soil-sensor -c 1 || exit 1
+      interval: 60s
+      retries: 5
+      start_period: 20s
+      timeout: 10s
     environment:
-      # KRaft settings
-      - KAFKA_CFG_NODE_ID=0
-      - KAFKA_CFG_PROCESS_ROLES=controller,broker
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
-      # Listeners
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093, EXTERNAL://0.0.0.0:9094 #EXTERNAL://:9094,
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://:9092 , EXTERNAL://sensorhost:9094 #, EXTERNAL://localhost:9094
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - TZ=${TZ:-Etc/UTC}
+    ports:
+      - target: 1883
+        published: 1883
+        protocol: tcp
+        mode: host
+      - target: 9001
+        protocol: tcp
+        mode: host
+    volumes:
+    - ./mosquitto-config:/mosquitto/config
+    
   soil-sensor:
     container_name: soil-sensor
     build: ./
-    #image: soil-sensor:latest
-    hostname: ${HOSTNAME}
+    image: soil-sensor:latest
     networks:
       - default
     devices:  
       - "/dev/i2c-1:/dev/i2c-1"  
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "soil_sensor.py", "check_health"]
+      start_period: 120s
+      interval: 10s
+      retries: 3
+      timeout: 30s
     environment:
       - TZ=${TZ:-Etc/UTC}
+      - SENSOR_NAME=${SENSOR_NAME:-unknown_sensorname}
+      - ENVIRONMENT=${ENVIRONMENT}
     volumes:
       - ./soil_sensor.py:/usr/app/src/soil_sensor.py
     command: sh -c "sleep 10s ; python3 ./soil_sensor.py"
     depends_on:
-      - kafka
+      - mosquitto
