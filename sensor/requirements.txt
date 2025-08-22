@@ -1,0 +1,5 @@
+paho-mqtt==2.1.0
+pytest-mqtt==0.5.0
+adafruit-circuitpython-seesaw==1.15.1
+Adafruit-Blinka==8.23.0
+Adafruit-PlatformDetect==3.53.0

@@ -57,8 +57,11 @@ def on_publish(client, userdata, mid):
     try:
         logging.info(f"Published measurement: {MQTT_MSG}")
     except NameError as e:
-        logging.error("NameError occurred - MQTT_MSG")
+        logging.error(f"NameError occurred - {MQTT_MSG}")
         logging.error(str(e))
+    except Exception as e:
+        logging.error(f"Error: {e} - {MQTT_MSG}")
+        return False
 
 
 def on_connect(client, userdata, flags, rc):
@@ -76,8 +79,7 @@ def on_disconnect(client, userdata, flags, rc):
 
 
 def publish_sensor_reading(mqtt_topic):
-    global MQTT_MSG
-    
+    """
     try:
         mqtt_client.loop_start()
 
@@ -93,10 +95,99 @@ def publish_sensor_reading(mqtt_topic):
         mqtt_client.loop_stop()
 
         return True
+    """
+    global MQTT_MSG
 
-    except:
+    try:
+        mqtt_client.loop_start()
+        sensor_reading = take_sensor_reading()
+        
+        # Validate sensor reading exists
+        if sensor_reading is None:
+            logging.warning("Sensor reading returned None, skipping publish")
+            mqtt_client.loop_stop()
+            return False
+            
+        # Validate required structure
+        if not isinstance(sensor_reading, dict):
+            logging.error("Sensor reading is not a valid dictionary, skipping publish")
+            mqtt_client.loop_stop()
+            return False
+            
+        # Check for required fields
+        if 'fields' not in sensor_reading:
+            logging.error("Sensor reading missing 'fields' key, skipping publish")
+            mqtt_client.loop_stop()
+            return False
+            
+        fields = sensor_reading['fields']
+        if not fields:
+            logging.error("Sensor reading 'fields' is empty, skipping publish")
+            mqtt_client.loop_stop()
+            return False
+            
+        # Check if all critical measurements are None
+        temp = fields.get('temp')
+        moisture = fields.get('moisture')
+        
+        if temp is None and moisture is None:
+            logging.error("All sensor measurements are None, skipping publish")
+            mqtt_client.loop_stop()
+            return False
+            
+        # Validate data ranges (optional - adjust ranges as needed)
+        if temp is not None:
+            if not isinstance(temp, (int, float)) or temp < -40 or temp > 150:
+                logging.error(f"Temperature reading {temp}°F is invalid or out of range, skipping publish")
+                mqtt_client.loop_stop()
+                return False
+                
+        if moisture is not None:
+            if not isinstance(moisture, (int, float)) or moisture < 0 or moisture > 1500:
+                logging.warning(f"Moisture reading {moisture}% seems invalid or out of range")
+                mqtt_client.loop_stop()
+                return False
+
+        # Attempt to serialize data
+        try:
+            MQTT_MSG = json.dumps(sensor_reading, default=json_serial)
+        except (TypeError, ValueError) as json_error:
+            logging.error(f"Failed to serialize sensor data to JSON: {json_error}")
+            mqtt_client.loop_stop()
+            return False
+            
+        # Validate the serialized message isn't empty
+        if not MQTT_MSG or MQTT_MSG.strip() == "":
+            logging.error("Serialized MQTT message is empty, skipping publish")
+            mqtt_client.loop_stop()
+            return False
+            
+        # Attempt to publish
+        try:
+            result = mqtt_client.publish(mqtt_topic, MQTT_MSG)
+            if result.rc != 0:
+                logging.error(f"MQTT publish failed with return code: {result.rc}")
+                mqtt_client.loop_stop()
+                return False
+        except Exception as publish_error:
+            logging.error(f"Exception during MQTT publish: {publish_error}")
+            mqtt_client.loop_stop()
+            return False
+            
+        mqtt_client.loop_stop()
+        logging.info("Sensor reading published successfully")
+        return True
+
+    except Exception as e:
         logging.error(f"Error during sensor reading and publishing loop: {e}")
+        # Ensure loop_stop is called even if there's an exception
+        try:
+            mqtt_client.loop_stop()
+        except Exception as loop_error:
+            logging.error(f"Loop stop failed due to {loop_error}")
+            pass
         return False
+
 
 ############### Health check function for Docker status ##################
 def check_health(max_retries=3, retry_interval=10):

@@ -1,0 +1,6 @@
+influxdb_client==1.48.0
+python-dotenv==1.0.1
+kafka-python==2.0.2
+paho-mqtt==1.6.1
+pandas==2.2.1 --prefer-binary
+pymongo==4.6.3

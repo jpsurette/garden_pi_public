@@ -5,6 +5,7 @@ services:
     networks:
       - default
     restart: unless-stopped
+    user: "1883:1883"
     healthcheck:
       test: ping soil-sensor -c 1 || exit 1
       interval: 60s
@@ -22,14 +23,26 @@ services:
         protocol: tcp
         mode: host
     volumes:
-    - ./mosquitto-config:/mosquitto/config
+    - ./config:/mosquitto/config
+    #command: |
+    #  sh -c "
+    #    cat > /mosquitto/config/mosquitto.conf << EOF
+    #    listener 1883
+    #    allow_anonymous true
+    #    persistence false
+    #    log_dest stdout
+    #    EOF
+    #    /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf
+    #  "
     
   soil-sensor:
     container_name: soil-sensor
-    build: ./
+    build:
+      context: .
+      dockerfile: Dockerfile
+      cache_from:
+        - soil-sensor:latest
     image: soil-sensor:latest
-    networks:
-      - default
     devices:  
       - "/dev/i2c-1:/dev/i2c-1"  
     restart: unless-stopped
@@ -43,8 +56,24 @@ services:
       - TZ=${TZ:-Etc/UTC}
       - SENSOR_NAME=${SENSOR_NAME:-unknown_sensorname}
       - ENVIRONMENT=${ENVIRONMENT}
-    volumes:
-      - ./soil_sensor.py:/usr/app/src/soil_sensor.py
+      - PYTHONPATH=/app/src:/usr/lib/python3/dist-packages
+#    volumes:
+#      - ./soil_sensor.py:/usr/app/src/soil_sensor.py
     command: sh -c "sleep 10s ; python3 ./soil_sensor.py"
     depends_on:
       - mosquitto
+
+  test-runner:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+    working_dir: /app/tests
+    devices:  
+      - "/dev/i2c-1:/dev/i2c-1"  
+    environment:
+      - PYTHONPATH=/app/src:/app/tests:/usr/lib/python3/dist-packages
+    volumes:
+      - ./tests:/app/tests
+      - ./src:/app/src
+    profiles:
+      - test

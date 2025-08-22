@@ -8,12 +8,38 @@ from datetime import datetime, timedelta
 import time
 import random
 import pandas as pd
-from kafka import KafkaProducer
 from influxdb_client import InfluxDBClient
 from dotenv import dotenv_values
 import logging
 import pymongo
 import sys
+from functools import lru_cache
+
+
+@lru_cache()
+def get_influx_config():
+    """Caches influx config vars from .env file for testing/production, tests use holder vals for calls from write to DB func"""
+
+    if environment in ("testing", "production"):
+        config = dotenv_values(".env")
+    else:
+        config = {
+            'INFLUXDB_BUCKET': os.environ['INFLUXDB_BUCKET'],
+            'INFLUXDB_URL': os.environ['INFLUXDB_URL'],
+            'INFLUXDB_TOKEN': os.environ['INFLUXDB_TOKEN'],
+            'INFLUXDB_ORG': os.environ['INFLUXDB_ORG'],
+            'INFLUXDB_USER': os.environ['INFLUXDB_USER'],
+            'INFLUXDB_PASSWORD': os.environ['INFLUXDB_PASSWORD']
+        }
+
+    return {
+            'bucket': config['INFLUXDB_BUCKET'],
+            'url': config.get('INFLUXDB_URL'),
+            'token': config['INFLUXDB_TOKEN'],
+            'org': config['INFLUXDB_ORG'],
+            'user': config['INFLUXDB_USER'],
+            'password': config['INFLUXDB_PASSWORD']
+    }
 
 
 # Function to query InfluxDB
@@ -54,35 +80,38 @@ def query_source(influx_client):
 ##@retry(stop_max_attempt_number=3, wait_fixed=2000) # need to implement retrying in dockerfile
 def connect_kafka_producer():
 
-    global kafka_topic
+    global kafka_producer
+    if kafka_producer is None:
+        from kafka import KafkaProducer
+        environment = os.getenv("ENVIRONMENT", "production")
 
-    # KAFKA configuration       
-    if environment is None or environment in ["","production"]:
-        # Production mode logic
-        kafka_topic = 'sensordata'
-        kafka_server = 'kafka_production:9092'
-    elif environment == "testing":
-        # Testing mode logic
-        kafka_topic = 'sensordata'
-        kafka_server = 'kafka_testing:9092'
-    else:
-        raise ValueError("Unknown environment specified")
+        if environment == "production":
+            kafka_server = "kafka:9092"
+        elif environment == "testing":
+            kafka_server = "kafka:9092"
+        elif environment == "":
+            print("No env specified")
+        else:
+            raise ValueError("Kafka environment issue")
 
+        kafka_topic = "sensordata"
 
-    return KafkaProducer(
-        bootstrap_servers=[kafka_server],
-        #security_protocol = 'SSL',
-        value_serializer=lambda x: json.dumps(x).encode('utf-8'),
-        api_version=(0, 10, 2),
-        request_timeout_ms=120000,
-        retries=5,
-        retry_backoff_ms=1000,
-        batch_size=16384,
-        linger_ms=10
-    )
+        kafka_producer = KafkaProducer(
+            bootstrap_servers=[kafka_server],
+            value_serializer=lambda x: json.dumps(x).encode("utf-8"),
+            api_version=(0, 10, 2),
+            request_timeout_ms=120000,
+            retries=5,
+            retry_backoff_ms=1000,
+            batch_size=16384,
+            linger_ms=10,
+        )
+    return kafka_producer
 
 
 def publish(topic, message, max_retries=3, retry_delay=1):
+
+    kafka_producer = connect_kafka_producer()
 
     attempt = 0
     while attempt < max_retries:
@@ -126,9 +155,15 @@ def check_health():
 
 def main():
     while True: 
+
+        influx_config = get_influx_config()
         
         try:
-            with InfluxDBClient(url=influx_url, port=8086, token=influx_token, org=influx_org) as influx_client:
+            with InfluxDBClient(
+                url=influx_config['url'],  # Important: include http://
+                token=influx_config['token'],
+                org=influx_config['org'],
+            ) as influx_client:
                 json_results = query_source(influx_client)
                 logging.info(json_results)
 
@@ -145,20 +180,6 @@ logging.basicConfig(level=logging.INFO) #DEBUG for problem code
 
 # Get the value of the ENVIRONMENT variable
 environment = os.getenv("ENVIRONMENT")
-
-kafka_producer = connect_kafka_producer()
-
-"""
-Initialize influxDB client
-"""
-influx_config = dotenv_values(".env")
-
-influx_bucket = influx_config['INFLUXDB_BUCKET']
-influx_url = influx_config['INFLUXDB_URL'] # testing vs production urls in .env file
-influx_token = influx_config['INFLUXDB_TOKEN']
-influx_org = influx_config['INFLUXDB_ORG']
-influx_user = influx_config['INFLUXDB_USER']
-influx_password = influx_config['INFLUXDB_PASSWORD']
 
 latest_source_timestamp = None
 

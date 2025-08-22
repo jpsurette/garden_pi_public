@@ -13,8 +13,33 @@ from dotenv import dotenv_values
 import paho.mqtt.client as mqtt
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS
+from functools import lru_cache
 
 
+@lru_cache()
+def get_influx_config():
+    """Caches influx config vars from .env file for testing/production, tests use holder vals for calls from write to DB func"""
+
+    if environment in ("testing", "production"):
+        config = dotenv_values(".env")
+    else:
+        config = {
+            'INFLUXDB_BUCKET': os.environ['INFLUXDB_BUCKET'],
+            'INFLUXDB_URL': os.environ['INFLUXDB_URL'],
+            'INFLUXDB_TOKEN': os.environ['INFLUXDB_TOKEN'],
+            'INFLUXDB_ORG': os.environ['INFLUXDB_ORG'],
+            'INFLUXDB_USER': os.environ['INFLUXDB_USER'],
+            'INFLUXDB_PASSWORD': os.environ['INFLUXDB_PASSWORD']
+        }
+
+    return {
+            'bucket': config['INFLUXDB_BUCKET'],
+            'url': config.get('INFLUXDB_URL'),
+            'token': config['INFLUXDB_TOKEN'],
+            'org': config['INFLUXDB_ORG'],
+            'user': config['INFLUXDB_USER'],
+            'password': config['INFLUXDB_PASSWORD']
+    }
 
 
 def on_connect(client, userdata, flags, rc):
@@ -40,18 +65,25 @@ def write_to_influxdb(sensor_data):
     """Write sensor data to InfluxDB."""
     global circuit_open, failure_count, last_failure_time
 
-    with InfluxDBClient(url=influx_url, port=8086, username=influx_user, password=influx_password, token=influx_token, org=influx_org) as influx_client:
-        write_api = influx_client.write_api(write_options=SYNCHRONOUS)
+    # Initialize InfluxDB client
+    influx_config = get_influx_config()
 
     try:
-        write_api.write(bucket=influx_bucket, record=sensor_data)
-        failure_count = 0  # Reset failure count on successful write
+        with InfluxDBClient(
+            url=influx_config['url'],  # Important: include http://
+            token=influx_config['token'],
+            org=influx_config['org'],
+        ) as influx_client:
+            write_api = influx_client.write_api(write_options=SYNCHRONOUS)
+            write_api.write(bucket=influx_config['bucket'], record=sensor_data)
+            failure_count = 0
     except Exception as e:
         print(f"Failed to write to InfluxDB: {e}")
         failure_count += 1
         last_failure_time = time.time()
         if failure_count >= MAX_FAILURES:
             open_circuit()
+        raise
 
 
 def open_circuit():
@@ -104,16 +136,6 @@ circuit_open = False
 failure_count = 0
 last_failure_time = None
 
-# Initialize InfluxDB client
-influx_config = dotenv_values(".env")
-influx_bucket = influx_config['INFLUXDB_BUCKET']
-influx_url = influx_config['INFLUXDB_URL'] # testing vs production urls in .env file
-influx_token = influx_config['INFLUXDB_TOKEN']
-influx_org = influx_config['INFLUXDB_ORG']
-influx_user = influx_config['INFLUXDB_USER']
-influx_password = influx_config['INFLUXDB_PASSWORD']
-
-
 ############### MQTT section ##################
 # MQTT configuration
 if environment in [None, "", "production"]:
@@ -141,6 +163,6 @@ except Exception as e:
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'check_health':
-        check_health()
+        sys.exit(check_health())
     else:
         main()

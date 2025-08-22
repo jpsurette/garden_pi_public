@@ -1,6 +1,6 @@
 services:
   save_sensor_data:
-    container_name: save_sensor_data
+    #container_name: save_sensor_data
     build: ./
     image: soil-sensorhost:latest
     logging:
@@ -13,14 +13,14 @@ services:
     environment:
       - TZ=${TZ:-Etc/UTC}
       - ENVIRONMENT=${ENVIRONMENT}
-      - INFLUXDB_HOST=influxdb_${ENVIRONMENT}
+#      - INFLUXDB_HOST=influxdb_${ENVIRONMENT}
     # replace env file as handling credentials exposed in docker
     env_file:
       - .env
     # going to copy these using the Dockerfile rather than volumes
     volumes:
-      - ./save_sensor_data.py:/usr/app/src/save_sensor_data.py
-      - ./.env:/usr/app/src/.env
+      - ./src/save_sensor_data.py:/app/src/save_sensor_data.py
+      - ./.env:/app/src/.env
     command: >
       sh -c "sleep 10s ; python3 ./save_sensor_data.py ;"
     depends_on:
@@ -36,7 +36,7 @@ services:
 
   # Python script that publishes the data from Influx to kafka
   send_sensor_data:
-    container_name: send_sensor_data
+    #container_name: send_sensor_data
     build: ./
     image: soil-sensorhost:latest
     logging:
@@ -53,8 +53,8 @@ services:
     env_file:
       - .env
     volumes:
-      - ./send_sensor_data.py:/usr/app/src/send_sensor_data.py
-      - ./.env:/usr/app/src/.env
+      - ./src/send_sensor_data.py:/app/src/send_sensor_data.py
+      - ./.env:/app/src/.env
     command: >
       sh -c "sleep 10s ; python3 ./send_sensor_data.py ;"
     depends_on:
@@ -74,7 +74,7 @@ services:
 #          memory: "256M"
 
   influxdb:
-    container_name: ${INFLUXDB_HOST}
+    #container_name: ${INFLUXDB_HOST}
     image: influxdb:2.7
     restart: unless-stopped
     networks:
@@ -92,7 +92,7 @@ services:
     - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG}
     - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET}
     - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
-    - INFLUXDB_HOST=${INFLUXDB_HOST}
+#    - INFLUXDB_HOST=${INFLUXDB_HOST}
     env_file:
       - .env
     volumes:
@@ -114,7 +114,7 @@ services:
 
   #Kafka messaging for publishing collected sensor data
   kafka:
-    container_name: kafka_${ENVIRONMENT}
+    #container_name: kafka_${ENVIRONMENT}
     image: 'bitnami/kafka:latest'
     logging:
       driver: "json-file"
@@ -155,10 +155,10 @@ services:
 
   # MQTT messages to capture readings from sensors on LAN
   mosquitto:
-    container_name: ${MOSQUITTO_HOST}
     image: 'eclipse-mosquitto:2.0'
     networks:
       - default
+    user: "1883:1883"
     logging:
       driver: "json-file"
       options:
@@ -167,7 +167,7 @@ services:
     restart: unless-stopped
     environment:
     - TZ=${TZ:-Etc/UTC}
-    - MOSQUITTO_HOST=${MOSQUITTO_HOST}
+#    - MOSQUITTO_HOST=${MOSQUITTO_HOST}
     env_file:
       - .env
     ports:
@@ -179,9 +179,18 @@ services:
         protocol: tcp
         mode: host
     volumes:
-    - ./mosquitto-config:/mosquitto/config 
-    - /home/pi/iot_data/mosquitto/log:/mosquitto/log/
-    - /home/pi/iot_data/mosquitto/data:/mosquitto/data/
+      - type: bind
+        source: ./config/mosquitto.conf
+        target: /mosquitto/config/mosquitto.conf
+        read_only: true
+      - type: volume
+        source: mosquitto-data
+        target: /mosquitto/data/
+      - type: volume
+        source: mosquitto-logs
+        target: /mosquitto/log/
+#- ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+#- /home/pi/iot_data/mosquitto/log:/mosquitto/log/
     healthcheck:
       test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
       interval: 30s
@@ -192,7 +201,7 @@ services:
 
   grafana:
     image: grafana/grafana
-    container_name: grafana
+    #container_name: grafana
     logging:
       driver: "json-file"
       options:
@@ -205,6 +214,10 @@ services:
       - TZ=Etc/UTC
       - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+#      - INFLUXDB_PORT=${INFLUXDB_PORT}
+      - INFLUXDB_ORG=${INFLUXDB_ORG}
+      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET}
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
     env_file:
       - .env
     links:
@@ -213,32 +226,43 @@ services:
       - '3000:3000'
     volumes:
       - grafana_volume:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+
+  test-runner:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+    working_dir: /app/tests
+    environment:
+      - PYTHONPATH=/app/src:/app/tests:/usr/lib/python3/dist-packages
+    volumes:
+      - ./tests:/app/tests
+      - ./src:/app/src
+    profiles:
+      - test
+
 
 
 volumes:
+
   influx_data_volume:
-    driver: local
-    driver_opts:
-       o: bind
-       type: none
-       device: /home/pi/iot_data/influxdb/data
   influx_backup_volume:
-    driver: local
-    driver_opts:
-       o: bind
-       type: none
-       device: /home/pi/iot_data/influxdb/backup
   influx_config_volume:
-    driver: local
-    driver_opts:
-       o: bind
-       type: none
-       device: /home/pi/iot_data/influxdb/config
+  mosquitto-data:
+  mosquitto-logs:
   grafana_volume:
-    driver: local
-    driver_opts:
-       o: bind
-       type: none
-       device: /home/pi/iot_data/grafana
   kafka_data:  
-    driver: local
+#    driver: local
+#    driver_opts:
+#       o: bind
+#       type: none
+#       device: /home/pi/iot_data/kafka
+#  mosquitto-config:
+  # Docker managed to avoid bind mount, may need to spin down volume if config changes
+  

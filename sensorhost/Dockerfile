@@ -1,12 +1,12 @@
-FROM balenalib/raspberry-pi-debian-python:latest
+FROM balenalib/raspberry-pi-debian-python:3.10
+
+WORKDIR /app/src
+
+RUN pip install --upgrade pip==24.3.1 setuptools==75.6.0 wheel && \
+    apt-get update && apt-get -y install build-essential cmake
+
+COPY requirements-sensorhost.txt .
+
+RUN pip install -r requirements-sensorhost.txt
 
 
-RUN pip install --upgrade pip
-RUN pip install --upgrade setuptools wheel
-RUN apt-get update && apt-get -y install build-essential && apt-get install cmake
-RUN pip install influxdb_client && pip install python-dotenv && pip install kafka-python && pip install paho-mqtt==1.6.1
-
-RUN pip install pandas==2.2.1
-RUN pip install pymongo==4.6.3
-
-WORKDIR /usr/app/src
