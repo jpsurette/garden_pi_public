@@ -1,0 +1,190 @@
+name: Warehouse CI/CD Pipeline
+
+on:
+  push:
+    #branches: [ main ]
+    paths:
+      - '.github/workflows/warehouse_update.yml'
+      - 'warehouse/**'
+#    paths-ignore:
+#      - 'sensorhost/**'
+#      - 'sensor/**'
+#      - '.github/workflows/sensorhost_update.yml'
+#      - '.github/workflows/sensor_update.yml'
+  pull_request:
+    #branches: [ main ]
+    paths:
+      - '.github/workflows/warehouse_update.yml'
+      - 'warehouse/**'
+#    paths-ignore:
+#      - '.github/workflows/sensorhost_update.yml'
+#      - '.github/workflows/sensor_update.yml'
+#      - 'sensorhost/**'
+#      - 'sensor/**'
+
+
+jobs:
+
+  test_updates:
+
+    runs-on: [warehouse]
+    if: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        working-directory: /home/jsur/actions-runner/_work/garden_pi/garden_pi/warehouse
+    env:
+      ENVIRONMENT: testing
+      JUPYTER_PORT: 8889
+      PORT_STRING: "15433:5432"
+      COMPOSE_PROJECT_NAME: garden-testing
+    
+    steps:  
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: 'development'
+          clean: true
+
+       # user specific .env file location to be updated
+      - name: Copy latest .env file
+        run: |
+          rm -rf /home/jsur/actions-runner/_work/garden_pi/garden_pi/warehouse/.env/
+          cp -f /home/jsur/.env /home/jsur/actions-runner/_work/garden_pi/garden_pi/warehouse/
+
+      - name: export Host IP
+        run: |
+          echo "HOST_IP=$(curl -s ifconfig.me)" >> $GITHUB_ENV
+
+      - name: Build & start docker containers
+        run: | 
+          echo "---Building images and starting up docker---"
+
+          echo "Build-time ENVIRONMENT: ${ENVIRONMENT}"
+          echo "Build-time JUPYTER_PORT: ${JUPYTER_PORT}"
+          echo "Build-time PORT_STRING: ${PORT_STRING}"
+
+          export PORT_STRING=$PORT_STRING
+          
+          docker compose up -d --build
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo "Docker Compose failed with exit code $exit_code"
+            exit $exit_code
+          else
+            echo "Containers are up"
+          fi
+
+      - name: Restart containers
+        run: |
+          docker compose restart
+
+      - name: Sleep for 1 minute
+        run: sleep 60s
+        shell: bash
+
+      - name: Run health checks
+        run: |
+          docker compose ps -q warehouse  | xargs docker inspect --format '{{ .State.Health.Status }}' > warehouse_${ENVIRONMENT}_health
+          
+          # Check if any health check returns "starting" or status 1
+          if grep -q "starting" warehouse_${ENVIRONMENT}_health; then
+            echo "Health check failed: status is starting."
+            exit 1
+          elif grep -q "1" warehouse_${ENVIRONMENT}_health; then
+            echo "Health check failed: status is 1."
+            exit 1
+          fi
+
+      - name: Run tests
+        run: |
+          docker compose run --rm test-runner pytest -p no:cacheprovider tests/ -v
+
+      - name: Cleanup testing
+        run: |
+          docker compose down --volumes --remove-orphans
+        if: always()
+
+ 
+  deploy_updates:
+  
+    runs-on: [warehouse]
+    needs: test_updates
+    if: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        working-directory: /home/jsur/actions-runner/_work/garden_pi/garden_pi/warehouse
+    env:
+      ENVIRONMENT: production
+      JUPYTER_PORT: 8888
+      PORT_STRING: "0.0.0.0:15432:5432"
+      COMPOSE_PROJECT_NAME: garden-production
+    
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+#          ref: 'main'
+          clean: true
+
+      # copies .env file from local to github actions runner
+      # better, more secure way of handling config to be implemented
+      # user specific .env file location to be updated
+      - name: Copy latest .env file
+        run: |
+          rm -rf /home/jsur/actions-runner/_work/garden_pi/garden_pi/warehouse/.env/
+          cp -f /home/jsur/.env /home/jsur/actions-runner/_work/garden_pi/garden_pi/warehouse/
+
+      - name: export Host IP
+        run: |
+          echo "HOST_IP=$(curl -s ifconfig.me)" >> $GITHUB_ENV
+
+
+#      - name: export environment variable
+#        run: |
+#          export ENVIRONMENT="${ENVIRONMENT}"
+#          echo "Using environment: $ENVIRONMENT"
+
+      - name: Build & start docker containers
+        run: | 
+          echo "---Building images and starting up docker---"
+
+          echo "Build-time ENVIRONMENT: ${ENVIRONMENT}"
+          echo "Build-time JUPYTER_PORT: ${JUPYTER_PORT}"
+          echo "Build-time PORT_STRING: ${PORT_STRING}"
+          export PORT_STRING=$PORT_STRING
+          
+          docker compose up -d --build
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo "Docker Compose failed with exit code $exit_code"
+            exit $exit_code
+          else
+            echo "Containers are up"
+          fi
+
+      - name: Restart containers
+        run: |
+          docker compose restart
+
+      - name: Sleep for 1 minute
+        run: sleep 60s
+        shell: bash
+
+      - name: Run health checks
+        run: |
+          docker compose ps -q warehouse | xargs docker inspect --format '{{ .State.Health.Status }}' > warehouse_${ENVIRONMENT}_health
+          
+          # Check if any health check returns "starting" or status 1
+          if grep -q "starting" warehouse_${ENVIRONMENT}_health; then
+            echo "Health check failed: status is starting."
+            exit 1
+          elif grep -q "1" warehouse_${ENVIRONMENT}_health; then
+            echo "Health check failed: status is 1."
+            exit 1
+          fi
+
+      - name: Run tests
+        run: |
+          docker compose run --rm test-runner pytest -p no:cacheprovider tests/ -v
+

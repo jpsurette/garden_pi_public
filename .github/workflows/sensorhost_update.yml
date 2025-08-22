@@ -1,0 +1,184 @@
+name: Test & update sensorhost
+
+on:
+  pull_request:
+    #branches: [main]
+    paths:
+      - '.github/workflows/sensorhost_update.yml'
+      - 'sensorhost/**'
+
+  push:
+    #branches: [main]
+    paths:
+      - '.github/workflows/sensorhost_update.yml'
+      - 'sensorhost/**'
+
+jobs:
+
+  test_updates:
+
+    runs-on: [sensorhost-test]
+    if: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}/sensorhost
+#        working-directory: /home/jsur/actions-runner/_work/garden_pi/garden_pi/sensorhost
+    env:
+      ENVIRONMENT: testing
+      COMPOSE_PROJECT_NAME: garden-testing
+    
+    steps:  
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: 'development'
+          clean: true
+
+      # copies .env file from local to github actions runner
+      # better, more secure way of handling config to be implemented
+      - name: Copy .env
+        run: |
+          rm -rf sensorhost/.env/
+          cp -f /home/pi/.env .env
+
+#      - name: Copy .env
+#        run: |
+#          rm -rf /home/pi/actions-runner/_work/garden_pi/garden_pi/sensorhost/.env/
+#          cp -f /home/pi/.env /home/pi/actions-runner/_work/garden_pi/garden_pi/sensorhost/
+#          rm -rf .env/
+
+      - name: export Host IP
+        run: |
+          echo "HOST_IP=$(curl -s ifconfig.me)" >> $GITHUB_ENV
+
+      - name: Stop and remove containers
+        run: |
+          docker stop mosquitto_testing || true
+          docker rm mosquitto_testing || true
+
+      - name: Build & start docker containers
+        run: | 
+          echo "---Building images and starting up docker---"
+          
+          docker compose up -d --build
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo "Docker Compose failed with exit code $exit_code"
+            exit $exit_code
+          else
+            echo "Containers are up"
+          fi
+
+      - name: Run unit & integration tests
+        run: |
+          docker compose run --rm --build test-runner pytest -p no:cacheprovider -m "unit or integration" -v
+
+      - name: Restart containers
+        run: |
+          docker compose restart
+
+      - name: Sleep for 1 minute
+        run: sleep 60s
+        shell: bash
+
+      - name: Run health checks
+        run: |
+          docker compose ps -q save_sensor_data | xargs docker inspect --format '{{ .State.Health.Status }}' > save_sensor_data_health
+          #docker compose ps -q influxdb | xargs docker inspect --format '{{ .State.Health.Status }}' > influxdb_health
+          #docker compose ps -q send_sensor_data | xargs docker inspect --format '{{ .State.Health.Status }}' > send_sensor_data_health
+          
+          # Check if any health check returns "starting" or status 1
+          #if grep -q "starting" save_sensor_data_health influxdb_health send_sensor_data_health; then
+          #if grep -q "starting" influxdb_health send_sensor_data_health; then
+          if grep -q "starting" save_sensor_data_health; then
+            echo "Health check failed: status is starting."
+            exit 1
+          #elif grep -q "1" save_sensor_data_health influxdb_health send_sensor_data_health; then
+          #elif grep -q "1" influxdb_health send_sensor_data_health; then
+          elif grep -q "1" save_sensor_data_health; then
+            echo "Health check failed: status is 1."
+            exit 1
+          fi
+
+ 
+  deploy_updates:
+  
+    runs-on: [sensorhost]
+    needs: test_updates
+    if: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}/sensorhost
+#        working-directory: /home/jsur/actions-runner/_work/garden_pi/garden_pi/sensorhost
+    env:
+      ENVIRONMENT: production
+      COMPOSE_PROJECT_NAME: garden-production
+    
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      # copies .env file from local to github actions runner
+      # better, more secure way of handling config to be implemented
+      - name: Copy .env
+        run: |
+          rm -rf sensorhost/.env/
+          cp -f /home/pi/.env .env
+
+#      - name: Copy .env
+#        run: |
+#          rm -rf /home/pi/actions-runner/_work/garden_pi/garden_pi/sensorhost/.env/
+#          cp -f /home/pi/.env /home/pi/actions-runner/_work/garden_pi/garden_pi/sensorhost/
+#          rm -rf .env/
+
+
+      - name: export Host IP
+        run: |
+          echo "HOST_IP=$(curl -s ifconfig.me)" >> $GITHUB_ENV
+
+      - name: Build & start docker containers
+        run: | 
+          echo "---Building images and starting up docker---"
+          docker compose up -d --build
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo "Docker Compose failed with exit code $exit_code"
+            exit $exit_code
+          else
+            echo "Containers are up"
+          fi
+
+      - name: Run unit & integration tests
+        run: |
+          docker compose run --rm --build test-runner pytest -p no:cacheprovider -m "unit or integration" -v
+
+      - name: Restart containers
+        run: |
+            docker compose restart
+
+      - name: Sleep for 1 minute
+        run: sleep 60s
+        shell: bash
+
+      - name: Run health checks
+        run: |
+          docker compose ps -q save_sensor_data | xargs docker inspect --format '{{ .State.Health.Status }}' > save_sensor_data_health
+          #docker compose ps -q influxdb | xargs docker inspect --format '{{ .State.Health.Status }}' > influxdb_health
+          #docker compose ps -q send_sensor_data | xargs docker inspect --format '{{ .State.Health.Status }}' > send_sensor_data_health
+          
+          # Check if any health check returns "starting" or status 1
+          #if grep -q "starting" save_sensor_data_health influxdb_health send_sensor_data_health; then
+          #if grep -q "starting" influxdb_health send_sensor_data_health; then
+          if grep -q "starting" save_sensor_data_health; then
+            echo "Health check failed: status is starting."
+            exit 1
+          #elif grep -q "1" save_sensor_data_health influxdb_health send_sensor_data_health; then
+          #elif grep -q "1" influxdb_health send_sensor_data_health; then
+          elif grep -q "1" save_sensor_data_health; then
+            echo "Health check failed: status is 1."
+            exit 1
+          fi

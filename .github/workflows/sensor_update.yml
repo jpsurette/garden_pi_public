@@ -1,0 +1,149 @@
+name: Test & deploy all sensors
+
+on:
+  pull_request:
+    #branches: [main]
+    paths:
+      - '.github/workflows/sensor_update.yml'
+      - 'sensor/**'
+#    paths-ignore:
+#      - 'sensorhost/**'
+#      - 'warehouse/**'
+#      - '.github/workflows/warehouse_update.yml'
+#      - '.github/workflows/sensorhost_update.yml'
+  push:
+    #branches: [main]
+    paths:
+      - '.github/workflows/sensor_update.yml'
+      - 'sensor/**'
+#    paths-ignore:
+#      - '.github/workflows/warehouse_update.yml'
+#      - '.github/workflows/sensorhost_update.yml'
+#      - 'sensorhost/**'
+#      - 'warehouse/**'
+
+jobs:
+
+  test_updates:
+
+    runs-on: [sensortest]
+    if: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        working-directory: sensor/
+    env:
+      ENVIRONMENT: testing
+    
+    steps:  
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: 'development'
+          clean: true
+
+      - name: Set sensor name environment variable
+        run: echo "SENSOR_NAME=$(hostname)" >> $GITHUB_ENV
+
+      - name: Build & start docker containers
+        timeout-minutes: 30
+        run: | 
+          echo "---Building images and starting up docker---"
+          docker compose -f /home/pi/actions-runner/_work/garden_pi/garden_pi/sensor/docker-compose.yaml up -d --build
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo "Docker Compose failed with exit code $exit_code"
+            exit $exit_code
+          else
+            echo "Containers are up"
+          fi
+
+      - name: Restart containers
+        run: |
+          docker compose -f /home/pi/actions-runner/_work/garden_pi/garden_pi/sensor/docker-compose.yaml restart
+
+      - name: Sleep for 1 minute
+        run: sleep 60s
+        shell: bash
+
+      - name: Run health checks
+        run: |
+          docker compose -f /home/pi/actions-runner/_work/garden_pi/garden_pi/sensor/docker-compose.yaml ps -q soil-sensor | xargs docker inspect --format '{{ .State.Health.Status }}' > sensor_health
+          
+          # Check if any health check returns "starting" or status 1
+          if grep -q "starting" sensor_health; then
+            echo "Health check failed: status is starting."
+            exit 1
+          elif grep -q "1" sensor_health; then
+            echo "Health check failed: status is 1."
+            exit 1
+          fi
+
+      - name: Run tests
+        run: |
+          docker compose run --rm test-runner pytest -p no:cacheprovider -m "unit or integration" -v
+ 
+  deploy_updates:
+
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ sensor1, sensor2, sensor3, sensor4 ]
+    needs: test_updates
+    if: ${{ github.event_name == 'pull_request' }}
+    defaults:
+      run:
+        working-directory: sensor/
+    env:
+      ENVIRONMENT: production
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          #          ref: 'main'
+          clean: true
+
+      - name: Set sensor name environment variable
+        run: echo "SENSOR_NAME=$(hostname)" >> $GITHUB_ENV
+
+      - name: Build & start docker containers
+        timeout-minutes: 30
+        run: | 
+          echo "---Building images and starting up docker---"
+          export ENVIRONMENT=production
+          docker compose -f /home/pi/actions-runner/_work/garden_pi/garden_pi/sensor/docker-compose.yaml up -d --build
+          exit_code=$?
+          if [ $exit_code -ne 0 ]; then
+            echo "Docker Compose failed with exit code $exit_code"
+            exit $exit_code
+          else
+            echo "Containers are up"
+          fi
+
+      - name: Restart containers
+        run: |
+            docker compose -f /home/pi/actions-runner/_work/garden_pi/garden_pi/sensor/docker-compose.yaml restart
+
+      - name: Sleep for 1 minute
+        run: sleep 60s
+        shell: bash
+    
+      - name: Run health checks
+        run: |
+          docker compose -f /home/pi/actions-runner/_work/garden_pi/garden_pi/sensor/docker-compose.yaml ps -q soil-sensor | xargs docker inspect --format '{{ .State.Health.Status }}' > sensor_health
+          
+          # Check if any health check returns "starting" or status 1
+          if grep -q "starting" sensor_health; then
+            echo "Health check failed: status is starting."
+            exit 1
+          elif grep -q "1" sensor_health; then
+            echo "Health check failed: status is 1."
+            exit 1
+          fi
+
+      - name: Run tests
+        run: |
+          docker compose run --rm test-runner pytest -p no:cacheprovider -m "unit or integration" -v
+          
